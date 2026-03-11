@@ -5,6 +5,57 @@ from urllib.parse import urlparse
 
 app = Flask(__name__)
 
+def infer_capability_presence(capability_name, capabilities_data, services_data):
+    """Infère la présence d'une capacité basée sur d'autres endpoints déclarés"""
+    
+    # Indicateurs pour Identity Linking
+    identity_indicators = [
+        'identity', 'auth', 'login', 'signin', 'oauth', 'sso', 'profile',
+        'user', 'account', 'customer', 'member'
+    ]
+    
+    # Indicateurs pour Order
+    order_indicators = [
+        'order', 'cart', 'checkout', 'payment', 'purchase', 'billing',
+        'transaction', 'invoice', 'receipt', 'shipping', 'delivery'
+    ]
+    
+    # Vérifier les capacités déclarées pour des indicateurs
+    for cap_name, cap_info in capabilities_data.items():
+        cap_lower = cap_name.lower()
+        
+        if capability_name == 'dev.ucp.common.identity_linking':
+            if any(indicator in cap_lower for indicator in identity_indicators):
+                return True, 'Inféré depuis autres capacités'
+                
+        elif capability_name == 'dev.ucp.shopping.order':
+            if any(indicator in cap_lower for indicator in order_indicators):
+                return True, 'Inféré depuis autres capacités'
+    
+    # Vérifier les endpoints des services pour des indicateurs
+    if services_data and isinstance(services_data, list):
+        for service in services_data:
+            if not isinstance(service, dict):
+                continue
+                
+            endpoint = service.get('endpoint', '')
+            service_name = service.get('capability', '') or service.get('name', '') or service.get('id', '')
+            
+            endpoint_lower = endpoint.lower()
+            service_lower = service_name.lower()
+            
+            if capability_name == 'dev.ucp.common.identity_linking':
+                if (any(indicator in endpoint_lower for indicator in identity_indicators) or
+                    any(indicator in service_lower for indicator in identity_indicators)):
+                    return True, 'Inféré depuis endpoints'
+                    
+            elif capability_name == 'dev.ucp.shopping.order':
+                if (any(indicator in endpoint_lower for indicator in order_indicators) or
+                    any(indicator in service_lower for indicator in order_indicators)):
+                    return True, 'Inféré depuis endpoints'
+    
+    return False, None
+
 def check_ucp_capabilities(json_data):
     """Vérifie les capacités UCP spécifiques dans les données JSON"""
     capabilities_to_check = [
@@ -47,14 +98,14 @@ def check_ucp_capabilities(json_data):
         extension_map = build_extension_map(capabilities_data)
         
         for capability in capabilities_to_check:
-            capability_result = {'Présence': 'Absent (selon le JSON public, peut être géré côté serveur)', 'Version': 'N/A', 'Endpoint': 'Non accessible', 'Extension': False}
+            capability_result = {'Présence': 'Non déclaré dans ce profil (mais peut être disponible)', 'Version': 'N/A', 'Endpoint': 'Non accessible', 'Extension': False}
             
             # Vérifier si la capacité est directement présente
             if capability in capabilities_data:
                 capability_info = capabilities_data[capability]
                 capability_result['Présence'] = 'Présent'
                 
-                # Extraire la version
+                # Extraire la version exacte
                 if isinstance(capability_info, dict):
                     if 'version' in capability_info:
                         capability_result['Version'] = str(capability_info['version'])
@@ -62,12 +113,18 @@ def check_ucp_capabilities(json_data):
                         capability_result['Version'] = str(capability_info['v'])
                     elif '__version' in capability_info:
                         capability_result['Version'] = str(capability_info['__version'])
+                    elif 'version_number' in capability_info:
+                        capability_result['Version'] = str(capability_info['version_number'])
+                    elif 'release' in capability_info:
+                        capability_result['Version'] = str(capability_info['release'])
+                    elif 'build' in capability_info:
+                        capability_result['Version'] = str(capability_info['build'])
                     else:
                         capability_result['Version'] = 'Non spécifiée'
                 elif isinstance(capability_info, str):
                     capability_result['Version'] = capability_info
                 else:
-                    capability_result['Version'] = 'Inconnue'
+                    capability_result['Version'] = 'Non spécifiée'
             
             # Vérifier si la capacité est étendue par d'autres capacités
             elif capability in extension_map:
@@ -75,12 +132,12 @@ def check_ucp_capabilities(json_data):
                 capability_result['Présence'] = 'Présent (via extension)'
                 capability_result['Extension'] = True
                 
-                # Hériter la version de la capacité de base
+                # Hériter la version exacte de la capacité qui étend
                 extending_capabilities = extension_map[capability]
                 for ext_cap in extending_capabilities:
                     ext_info = capabilities_data.get(ext_cap, {})
                     if isinstance(ext_info, dict):
-                        # Utiliser la version de la capacité qui étend si elle n'a pas sa propre version
+                        # Chercher la version dans tous les champs possibles
                         if 'version' in ext_info:
                             capability_result['Version'] = str(ext_info['version'])
                             break
@@ -90,19 +147,83 @@ def check_ucp_capabilities(json_data):
                         elif '__version' in ext_info:
                             capability_result['Version'] = str(ext_info['__version'])
                             break
+                        elif 'version_number' in ext_info:
+                            capability_result['Version'] = str(ext_info['version_number'])
+                            break
+                        elif 'release' in ext_info:
+                            capability_result['Version'] = str(ext_info['release'])
+                            break
+                        elif 'build' in ext_info:
+                            capability_result['Version'] = str(ext_info['build'])
+                            break
+                    elif isinstance(ext_info, str):
+                        capability_result['Version'] = ext_info
+                        break
                 
-                # Si aucune version trouvée, chercher dans la capacité de base si elle existe
+                # Si aucune version trouvée dans l'extension, utiliser Non spécifiée
                 if capability_result['Version'] == 'N/A':
-                    # Chercher une version par défaut ou utiliser Non spécifiée
                     capability_result['Version'] = 'Non spécifiée'
+            
+            # Vérifier l'inférence pour Identity Linking et Order
+            elif capability in ['dev.ucp.common.identity_linking', 'dev.ucp.shopping.order']:
+                # Essayer d'inférer la présence depuis d'autres endpoints
+                inferred, inference_reason = infer_capability_presence(capability, capabilities_data, services_data)
+                if inferred:
+                    capability_result['Présence'] = f'Présent (inféré - {inference_reason})'
+                    capability_result['Version'] = 'Non spécifiée'
+                else:
+                    # Garder le message par défaut pour les capacités absentes
+                    pass
             
             # Vérifier l'accessibilité de l'endpoint réel depuis services
             endpoint_status = check_service_endpoint(capability, services_data)
             capability_result['Endpoint'] = endpoint_status
             
+            # Pour Checkout, toujours vérifier aussi l'endpoint MCP
+            if capability == 'dev.ucp.shopping.checkout':
+                mcp_status = check_mcp_endpoint_for_checkout(services_data)
+                capability_result['Endpoint MCP'] = mcp_status
+            
             # Nettoyer le nom de la capacité pour l'affichage
             display_name = capability.replace('dev.ucp.', '').replace('.', ' ').title()
             results[display_name] = capability_result
+        
+        # Ajouter les capacités qui étendent d'autres capacités
+        for ext_cap_name, ext_cap_info in capabilities_data.items():
+            if isinstance(ext_cap_info, dict) and 'extends' in ext_cap_info:
+                extended_capability = ext_cap_info['extends']
+                
+                # Vérifier si la capacité étendue est dans notre liste de vérification
+                if extended_capability in capabilities_to_check:
+                    # Créer un résultat pour la capacité qui étend
+                    ext_result = {'Présence': 'Présent', 'Version': 'N/A', 'Endpoint': 'Non accessible', 'Extension': True, 'Extends': extended_capability}
+                    
+                    # Extraire la version de l'extension
+                    if 'version' in ext_cap_info:
+                        ext_result['Version'] = str(ext_cap_info['version'])
+                    elif 'v' in ext_cap_info:
+                        ext_result['Version'] = str(ext_cap_info['v'])
+                    elif '__version' in ext_cap_info:
+                        ext_result['Version'] = str(ext_cap_info['__version'])
+                    elif 'version_number' in ext_cap_info:
+                        ext_result['Version'] = str(ext_cap_info['version_number'])
+                    elif 'release' in ext_cap_info:
+                        ext_result['Version'] = str(ext_cap_info['release'])
+                    elif 'build' in ext_cap_info:
+                        ext_result['Version'] = str(ext_cap_info['build'])
+                    else:
+                        ext_result['Version'] = 'Non spécifiée'
+                    
+                    # Vérifier l'endpoint de l'extension
+                    endpoint_status = check_service_endpoint(ext_cap_name, services_data)
+                    ext_result['Endpoint'] = endpoint_status
+                    
+                    # Nettoyer le nom et ajouter l'information sur l'extension
+                    ext_display_name = ext_cap_name.replace('dev.ucp.', '').replace('.', ' ').title()
+                    base_name = extended_capability.replace('dev.ucp.', '').replace('.', ' ').title()
+                    ext_display_name_with_via = f"{ext_display_name} (via {base_name})"
+                    
+                    results[ext_display_name_with_via] = ext_result
     
     return results
 
@@ -118,6 +239,38 @@ def build_extension_map(capabilities_data):
             extension_map[extended_capability].append(cap_name)
     
     return extension_map
+
+def check_mcp_endpoint_for_checkout(services_data):
+    """Vérifie spécifiquement les endpoints MCP pour Checkout"""
+    if not services_data or not isinstance(services_data, list):
+        return 'Non testé'
+    
+    # Chercher tous les services pour Checkout
+    checkout_endpoints = []
+    for service in services_data:
+        if not isinstance(service, dict):
+            continue
+            
+        # Vérifier si ce service correspond à Checkout
+        service_capability = service.get('capability') or service.get('name') or service.get('id')
+        if service_capability == 'dev.ucp.shopping.checkout':
+            endpoint = service.get('endpoint')
+            if endpoint:
+                checkout_endpoints.append(endpoint)
+    
+    if not checkout_endpoints:
+        return 'Non testé'
+    
+    # Tester chaque endpoint MCP
+    for endpoint in checkout_endpoints:
+        try:
+            response = requests.get(endpoint, timeout=5, allow_redirects=True)
+            if response.status_code == 200:
+                return 'Endpoint MCP disponible'
+        except requests.exceptions.RequestException:
+            continue  # Essayer l'endpoint suivant
+    
+    return 'Non accessible'
 
 def check_service_endpoint(capability_name, services_data):
     """Vérifie si l'endpoint d'un service UCP répond avec HTTP 200"""

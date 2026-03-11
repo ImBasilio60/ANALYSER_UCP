@@ -315,18 +315,22 @@
                                         <th>Présence</th>
                                         <th>Version</th>
                                         <th>Endpoint</th>
+                                        <th>Endpoint MCP</th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     {% for capability_name, capability_data in value.items() %}
                                     <tr>
                                         <td>{{ capability_name }}</td>
-                                        <td class="{% if capability_data.Présence == 'Présent' %}present{% elif capability_data.Présence == 'Présent (via extension)' %}present{% elif 'Absent' in capability_data.Présence %}absent{% else %}present{% endif %}">
+                                        <td class="{% if capability_data.Présence == 'Présent' %}present{% elif capability_data.Présence == 'Présent (via extension)' %}present{% elif 'Présent (inféré' in capability_data.Présence %}present{% elif 'Non déclaré' in capability_data.Présence %}absent{% else %}present{% endif %}">
                                             {{ capability_data.Présence }}
                                         </td>
                                         <td>{{ capability_data.Version }}</td>
                                         <td class="{% if capability_data.Endpoint == 'Accessible' %}endpoint-accessible{% elif capability_data.Endpoint == 'Non accessible' %}endpoint-inaccessible{% else %}endpoint-unknown{% endif %}">
-                                            {{ capability_data.Endpoint }}
+                                            {% if capability_data.Endpoint == 'Accessible' %}✅ Disponible{% elif capability_data.Endpoint == 'Non accessible' %}❌ Non accessible{% else %}{{ capability_data.Endpoint }}{% endif %}
+                                        </td>
+                                        <td class="{% if capability_data.get('Endpoint MCP') == 'Endpoint MCP disponible' %}endpoint-accessible{% elif capability_data.get('Endpoint MCP') == 'Non accessible' %}endpoint-inaccessible{% else %}endpoint-unknown{% endif %}">
+                                            {% if capability_data.get('Endpoint MCP') == 'Endpoint MCP disponible' %}✅ MCP Disponible{% elif capability_data.get('Endpoint MCP') == 'Non accessible' %}❌ MCP Non accessible{% elif capability_data.get('Endpoint MCP') == 'Non testé' %}❓ MCP Non testé{% else %}{{ capability_data.get('Endpoint MCP', '-') }}{% endif %}
                                         </td>
                                     </tr>
                                     {% endfor %}
