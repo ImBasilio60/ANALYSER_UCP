@@ -1,0 +1,40 @@
+{
+  "user_id": "user_12345",
+  "profile_name": "Jean Dupont",
+  "capabilities": {
+    "dev.ucp.shopping.checkout": {
+      "version": "2.1.0",
+      "enabled": true,
+      "last_updated": "2024-01-15"
+    },
+    "dev.ucp.common.identity_linking": {
+      "version": "1.5.2",
+      "enabled": true,
+      "last_updated": "2024-01-10"
+    },
+    "dev.ucp.shopping.order": {
+      "version": "3.0.1",
+      "enabled": false,
+      "last_updated": "2024-01-08"
+    }
+  },
+  "services": [
+    {
+      "capability": "dev.ucp.shopping.checkout",
+      "endpoint": "https://api.example.com/checkout/health"
+    },
+    {
+      "capability": "dev.ucp.common.identity_linking", 
+      "endpoint": "https://identity.example.com/status"
+    },
+    {
+      "capability": "dev.ucp.shopping.order",
+      "endpoint": "https://order.example.com/ping"
+    }
+  ],
+  "metadata": {
+    "created_at": "2024-01-01",
+    "last_login": "2024-01-20",
+    "account_type": "premium"
+  }
+}
