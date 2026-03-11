@@ -277,22 +277,25 @@
     <div class="container">
         <div class="header">
             <h1>Analyseur de Profil UCP</h1>
-            <p>Entrez une URL pour récupérer le profil public UCP</p>
+            <p>Entrez une URL de base (ex: https://site.com) pour analyser automatiquement le profil UCP</p>
         </div>
         
         <div class="form-section">
             <form method="POST">
                 <div class="input-group">
-                    <label for="url">URL du profil UCP</label>
+                    <label for="url">URL de base (ex: https://site.com)</label>
                     <input 
                         type="text" 
                         id="url" 
                         name="url" 
                         class="url-input" 
-                        placeholder="api.exemple.com/profil/123" 
+                        placeholder="site.com" 
                         value="{{ url }}"
                         required
                     >
+                    <small style="color: #6c757d; font-size: 12px; margin-top: 4px; display: block;">
+                        L'URL sera automatiquement complétée vers /.well-known/ucp
+                    </small>
                 </div>
                 <button type="submit" class="analyze-btn">Analyser</button>
             </form>

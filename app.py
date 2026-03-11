@@ -1,9 +1,48 @@
 from flask import Flask, render_template, request
 import requests
 import json
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urljoin
 
 app = Flask(__name__)
+
+def complete_ucp_url(base_url):
+    """
+    Complète automatiquement une URL de base vers l'URL UCP complète.
+    Ex: https://site.com -> https://site.com/.well-known/ucp
+    """
+    # Normaliser l'URL de base
+    if not base_url.startswith(('http://', 'https://')):
+        base_url = 'https://' + base_url
+    
+    # Parser l'URL pour extraire les composants
+    parsed = urlparse(base_url)
+    
+    # Construire l'URL complète UCP
+    ucp_path = '/.well-known/ucp'
+    complete_url = f"{parsed.scheme}://{parsed.netloc}{ucp_path}"
+    
+    return complete_url
+
+def verify_ucp_url_exists(url):
+    """
+    Vérifie si l'URL UCP complète existe et répond correctement.
+    Retourne un tuple (exists, response_data)
+    """
+    try:
+        headers = {'Accept': 'application/json'}
+        response = requests.get(url, headers=headers, timeout=10)
+        
+        if response.status_code == 200:
+            try:
+                json_data = response.json()
+                return True, json_data
+            except json.JSONDecodeError:
+                return True, None  # URL existe mais pas de JSON
+        else:
+            return False, None
+            
+    except requests.exceptions.RequestException:
+        return False, None
 
 def infer_capability_presence(capability_name, capabilities_data, services_data):
     """Infère la présence d'une capacité basée sur d'autres endpoints déclarés"""
@@ -311,29 +350,43 @@ def index():
         url = request.form.get('url', '').strip()
         if url:
             try:
-                # Add protocol if missing
-                if not url.startswith(('http://', 'https://')):
-                    url = 'https://' + url
+                # Étape 1: Compléter automatiquement l'URL UCP
+                ucp_url = complete_ucp_url(url)
                 
-                # Fetch UCP public profile JSON
-                headers = {'Accept': 'application/json'}
-                response = requests.get(url, headers=headers, timeout=10)
+                # Étape 2: Vérifier si l'URL UCP complète existe
+                url_exists, json_data = verify_ucp_url_exists(ucp_url)
                 
-                # Handle specific HTTP errors
-                if response.status_code == 404:
-                    raise requests.exceptions.HTTPError("Profil UCP non trouvé (404)")
-                elif response.status_code == 403:
-                    raise requests.exceptions.HTTPError("Accès interdit au profil UCP (403)")
-                elif response.status_code >= 500:
-                    raise requests.exceptions.HTTPError(f"Erreur serveur UCP ({response.status_code})")
-                
-                response.raise_for_status()
-                
-                # Parse JSON response
-                try:
-                    json_data = response.json()
-                except json.JSONDecodeError:
-                    raise ValueError("La réponse n'est pas au format JSON valide")
+                if not url_exists:
+                    # Si l'URL UCP n'existe pas, essayer l'URL originale
+                    # Add protocol if missing
+                    if not url.startswith(('http://', 'https://')):
+                        url = 'https://' + url
+                    
+                    headers = {'Accept': 'application/json'}
+                    response = requests.get(url, headers=headers, timeout=10)
+                    
+                    # Handle specific HTTP errors
+                    if response.status_code == 404:
+                        raise requests.exceptions.HTTPError("Profil UCP non trouvé (404)")
+                    elif response.status_code == 403:
+                        raise requests.exceptions.HTTPError("Accès interdit au profil UCP (403)")
+                    elif response.status_code >= 500:
+                        raise requests.exceptions.HTTPError(f"Erreur serveur UCP ({response.status_code})")
+                    
+                    response.raise_for_status()
+                    
+                    # Parse JSON response
+                    try:
+                        json_data = response.json()
+                    except json.JSONDecodeError:
+                        raise ValueError("La réponse n'est pas au format JSON valide")
+                    
+                    final_url = url
+                else:
+                    # L'URL UCP complète existe, utiliser celle-ci
+                    final_url = ucp_url
+                    if json_data is None:
+                        raise ValueError("L'URL UCP existe mais ne contient pas de JSON valide")
                 
                 # Check UCP capabilities
                 capabilities = check_ucp_capabilities(json_data)
@@ -341,11 +394,13 @@ def index():
                 # Format results with French labels
                 result = {
                     'Statut': 'Succès',
-                    'Code HTTP': f"HTTP {response.status_code}",
-                    'Type de contenu': response.headers.get('Content-Type', 'Non spécifié'),
-                    'Taille de la réponse': f"{len(response.content)} octets",
+                    'Code HTTP': 'HTTP 200',
+                    'Type de contenu': 'application/json',
+                    'Taille de la réponse': f"{len(str(json_data))} octets",
                     'Données JSON': json_data,
-                    'URL': url
+                    'URL': final_url,
+                    'URL originale': url,
+                    'URL complétée': ucp_url if url_exists else 'Non utilisée'
                 }
                 
                 # Add capabilities to results
@@ -357,42 +412,48 @@ def index():
                     'Statut': 'Erreur',
                     'Code HTTP': 'Timeout',
                     'Erreur': 'Impossible d\'accéder au profil UCP - Délai d\'attente dépassé',
-                    'URL': url
+                    'URL': url,
+                    'URL complétée': ucp_url
                 }
             except requests.exceptions.ConnectionError:
                 result = {
                     'Statut': 'Erreur',
                     'Code HTTP': 'Connexion',
                     'Erreur': 'Impossible d\'accéder au profil UCP - Erreur de connexion',
-                    'URL': url
+                    'URL': url,
+                    'URL complétée': ucp_url
                 }
             except requests.exceptions.HTTPError as e:
                 result = {
                     'Statut': 'Erreur',
                     'Code HTTP': 'HTTP',
                     'Erreur': f'Impossible d\'accéder au profil UCP - {str(e)}',
-                    'URL': url
+                    'URL': url,
+                    'URL complétée': ucp_url
                 }
             except json.JSONDecodeError:
                 result = {
                     'Statut': 'Erreur',
                     'Code HTTP': 'JSON',
                     'Erreur': 'Impossible d\'accéder au profil UCP - La réponse n\'est pas un JSON valide',
-                    'URL': url
+                    'URL': url,
+                    'URL complétée': ucp_url
                 }
             except ValueError as e:
                 result = {
                     'Statut': 'Erreur',
                     'Code HTTP': 'Format',
                     'Erreur': f'Impossible d\'accéder au profil UCP - {str(e)}',
-                    'URL': url
+                    'URL': url,
+                    'URL complétée': ucp_url
                 }
             except Exception as e:
                 result = {
                     'Statut': 'Erreur',
                     'Code HTTP': 'Inconnue',
                     'Erreur': f'Impossible d\'accéder au profil UCP - Erreur inattendue: {str(e)}',
-                    'URL': url
+                    'URL': url,
+                    'URL complétée': ucp_url
                 }
     
     return render_template('index.html', result=result, url=url)
