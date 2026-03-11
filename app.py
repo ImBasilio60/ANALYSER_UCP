@@ -458,5 +458,141 @@ def index():
     
     return render_template('index.html', result=result, url=url)
 
+@app.route('/shop-simulation', methods=['POST'])
+def shop_simulation():
+    result = None
+    product_query = request.form.get('product_query', '').strip()
+    shop_url = request.form.get('shop_url', '').strip()
+    
+    if product_query and shop_url:
+        try:
+            # Normaliser l'URL du site marchand
+            if not shop_url.startswith(('http://', 'https://')):
+                shop_url = 'https://' + shop_url
+            
+            # Compléter automatiquement l'URL UCP pour le site marchand
+            ucp_url = complete_ucp_url(shop_url)
+            
+            # Vérifier si l'URL UCP complète existe
+            url_exists, json_data = verify_ucp_url_exists(ucp_url)
+            
+            if not url_exists:
+                # Si l'URL UCP n'existe pas, essayer l'URL originale
+                headers = {'Accept': 'application/json'}
+                response = requests.get(shop_url, headers=headers, timeout=10)
+                
+                if response.status_code == 404:
+                    raise requests.exceptions.HTTPError("Site marchand non trouvé (404)")
+                elif response.status_code == 403:
+                    raise requests.exceptions.HTTPError("Accès interdit au site marchand (403)")
+                elif response.status_code >= 500:
+                    raise requests.exceptions.HTTPError(f"Erreur serveur ({response.status_code})")
+                
+                response.raise_for_status()
+                
+                final_url = shop_url
+                ucp_available = False
+            else:
+                # L'URL UCP complète existe
+                final_url = ucp_url
+                ucp_available = True
+                if json_data is None:
+                    raise ValueError("L'URL UCP existe mais ne contient pas de JSON valide")
+            
+            # Simuler la recherche de produit
+            search_result = simulate_product_search(product_query, json_data if ucp_available else None, final_url)
+            
+            # Format results
+            result = {
+                'Statut': 'Succès',
+                'Type': 'Simulation Agent Shop',
+                'Produit recherché': product_query,
+                'Site marchand': shop_url,
+                'URL utilisée': final_url,
+                'UCP disponible': 'Oui' if ucp_available else 'Non',
+                'Résultat simulation': search_result
+            }
+            
+        except requests.exceptions.Timeout:
+            result = {
+                'Statut': 'Erreur',
+                'Type': 'Simulation Agent Shop',
+                'Erreur': 'Impossible d\'accéder au site marchand - Délai d\'attente dépassé',
+                'Produit recherché': product_query,
+                'Site marchand': shop_url
+            }
+        except requests.exceptions.ConnectionError:
+            result = {
+                'Statut': 'Erreur',
+                'Type': 'Simulation Agent Shop',
+                'Erreur': 'Impossible d\'accéder au site marchand - Erreur de connexion',
+                'Produit recherché': product_query,
+                'Site marchand': shop_url
+            }
+        except requests.exceptions.HTTPError as e:
+            result = {
+                'Statut': 'Erreur',
+                'Type': 'Simulation Agent Shop',
+                'Erreur': f'Impossible d\'accéder au site marchand - {str(e)}',
+                'Produit recherché': product_query,
+                'Site marchand': shop_url
+            }
+        except ValueError as e:
+            result = {
+                'Statut': 'Erreur',
+                'Type': 'Simulation Agent Shop',
+                'Erreur': f'Erreur lors de la simulation - {str(e)}',
+                'Produit recherché': product_query,
+                'Site marchand': shop_url
+            }
+        except Exception as e:
+            result = {
+                'Statut': 'Erreur',
+                'Type': 'Simulation Agent Shop',
+                'Erreur': f'Erreur inattendue lors de la simulation: {str(e)}',
+                'Produit recherché': product_query,
+                'Site marchand': shop_url
+            }
+    
+    return render_template('index.html', result=result, url='', shop_mode=True)
+
+def simulate_product_search(product_query, ucp_data, site_url):
+    """
+    Simule une recherche de produit en utilisant les données UCP si disponibles
+    """
+    simulation_result = {
+        'message': f"Simulation de recherche pour '{product_query}'",
+        'method_used': 'UCP' if ucp_data else 'HTTP standard',
+        'site_url': site_url
+    }
+    
+    if ucp_data:
+        # Analyser les capacités UCP pour la recherche
+        capabilities = check_ucp_capabilities(ucp_data)
+        
+        # Vérifier si les capacités de recherche sont disponibles
+        search_capabilities = []
+        for cap_name, cap_info in capabilities.items():
+            if 'search' in cap_name.lower() or 'product' in cap_name.lower():
+                search_capabilities.append({
+                    'name': cap_name,
+                    'status': cap_info.get('Présence', 'Inconnu'),
+                    'endpoint': cap_info.get('Endpoint', 'Non accessible')
+                })
+        
+        if search_capabilities:
+            simulation_result['capacités_recherche'] = search_capabilities
+            simulation_result['message'] += f" - {len(search_capabilities)} capacité(s) de recherche trouvée(s)"
+        else:
+            simulation_result['message'] += " - Aucune capacité de recherche spécifique trouvée"
+        
+        # Ajouter les informations UCP
+        simulation_result['donnees_ucp'] = ucp_data
+    else:
+        simulation_result['message'] += " - Utilisation des méthodes HTTP standard"
+        simulation_result['note'] = "Le site ne semble pas avoir de profil UCP disponible"
+    
+    return simulation_result
+
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5002)
